@@ -1,0 +1,20 @@
+# Landing page + lead endpoint for brasil.leadsallyearlong.space; nginx proxies to 127.0.0.1:3094.
+# Build: NITRO_PRESET=node-server npm run build && systemctl restart brasil-bullion-2
+[Unit]
+Description=Brasil Bullion 2 landing page (Node server)
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/brasil-bullion-2
+EnvironmentFile=/var/www/brasil-bullion-2/.env
+Environment=NODE_ENV=production HOST=127.0.0.1 PORT=3094
+ExecStart=/usr/bin/node .output/server/index.mjs
+Restart=on-failure
+User=www-data
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
