@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { timingSchema } from "./form-timing";
 import { checkBrMobile, checkEmail, checkName } from "./validation";
 
 export const experienceOptions = [
@@ -55,6 +56,9 @@ export const leadSchema = z.object({
   fillMs: z.number().int().min(0).optional(),
   // Cloudflare Turnstile token; the server rejects the lead without a valid one.
   captchaToken: z.string().max(2048).optional(),
+  // Landing/field/click times, forwarded only to the leads log. Bad data is dropped, never
+  // rejects the lead.
+  timing: timingSchema.optional().catch(undefined),
 });
 
 export type Lead = z.infer<typeof leadSchema>;

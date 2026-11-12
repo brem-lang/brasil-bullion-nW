@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, Lock, ShieldCheck } from "lucide-react";
+import { TIMED_FIELDS, createFormTimer, type TimedField } from "@/lib/form-timing";
 import { depositOptions, experienceOptions, goalOptions, leadSchema } from "@/lib/lead";
 import { trackLead } from "@/lib/meta-pixel";
 import { submitLead } from "@/lib/submit-lead";
@@ -94,8 +95,12 @@ export function LeadForm({ id }: { id?: string }) {
   const captcha = useRef<TurnstileHandle>(null);
   // When the form appeared; sent as fillMs so the server can flag instant submits.
   const shownAt = useRef(0);
+  // Landing/field/click times for the leads log.
+  const timer = useRef<ReturnType<typeof createFormTimer> | null>(null);
+  const timed = () => (timer.current ??= createFormTimer());
   useEffect(() => {
     shownAt.current = Date.now();
+    timed().formLoaded();
   }, []);
 
   useEffect(() => {
@@ -113,7 +118,10 @@ export function LeadForm({ id }: { id?: string }) {
     setClickId((p.get("click_id") ?? p.get("clickid") ?? "").slice(0, 128));
   }, []);
 
-  const set = (k: keyof typeof f, v: unknown) => setF((s) => ({ ...s, [k]: v }));
+  const set = (k: keyof typeof f, v: unknown) => {
+    if ((TIMED_FIELDS as readonly string[]).includes(k)) timed().input(k as TimedField);
+    setF((s) => ({ ...s, [k]: v }));
+  };
 
   // Error for one step-1 field, using the same schema the server applies.
   const fieldError = (k: Step1Field, value = f[k]) => {
@@ -128,6 +136,7 @@ export function LeadForm({ id }: { id?: string }) {
   };
 
   const next = () => {
+    timed().continueClick();
     const errs = Object.fromEntries(STEP1.map((k) => [k, fieldError(k)])) as Partial<
       Record<Step1Field, string>
     >;
@@ -143,7 +152,9 @@ export function LeadForm({ id }: { id?: string }) {
   };
 
   const submit = async () => {
+    const timing = timed().submitClick();
     const r = leadSchema.safeParse({
+      timing,
       ...f,
       utm,
       clickId: clickId || undefined,
@@ -191,7 +202,9 @@ export function LeadForm({ id }: { id?: string }) {
     id: `lead-${k}`,
     "aria-invalid": !!fieldErr[k],
     "aria-describedby": fieldErr[k] ? `lead-${k}-err` : undefined,
+    onFocus: () => timed().focus(k),
     onBlur: () => {
+      timed().blur(k);
       if (f[k]) validate(k);
     },
   });

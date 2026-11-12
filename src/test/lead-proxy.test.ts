@@ -260,3 +260,90 @@ describe("handleSubmitLead", () => {
     expect(crm).not.toHaveBeenCalled();
   });
 });
+
+describe("leads log", () => {
+  const logCfg: CrmConfig = {
+    ...config,
+    logEndpoint: "https://log.example/api/leads-logs",
+    logApiKey: "log-key",
+  };
+  const logCall = (f: ReturnType<typeof vi.fn>) =>
+    f.mock.calls.find(([url]) => url === logCfg.logEndpoint);
+
+  it("sends the CRM payload to the log after a successful CRM call", async () => {
+    const f = crmReplies(201, { success: true, data: {} });
+    expect((await send(post(lead), f, logCfg)).status).toBe(200);
+    await vi.waitFor(() => expect(logCall(f)).toBeDefined());
+    const [, init] = logCall(f)!;
+    expect((init!.headers as Record<string, string>)["Authorization"]).toBe("Bearer log-key");
+    const body = JSON.parse(init!.body as string);
+    expect(body).toMatchObject({
+      email: "jose@gmail.com",
+      offer_name: "brasil-bullion",
+      ip_address: "203.0.113.7",
+      data: { firstname: "José", lastname: "Silva" },
+    });
+  });
+
+  it("does not log when the CRM rejects the lead", async () => {
+    const f = crmReplies(422, { success: false, errors: { email: ["bad"] } });
+    expect((await send(post(lead), f, logCfg)).status).toBe(422);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(logCall(f)).toBeUndefined();
+  });
+
+  it("does not log when the CRM request throws", async () => {
+    const f = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+      throw new TypeError("network down");
+    });
+    expect((await send(post(lead), f, logCfg)).status).toBe(503);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(logCall(f)).toBeUndefined();
+  });
+});
+
+describe("form timing in the leads log", () => {
+  const logCfg: CrmConfig = {
+    ...config,
+    logEndpoint: "https://log.example/api/leads-logs",
+    logApiKey: "log-key",
+  };
+  const timing = {
+    landed_at: "2026-11-12T10:00:00.000Z",
+    submitted_at: "2026-11-12T10:01:30.000Z",
+    timezone: "America/Sao_Paulo",
+    utc_offset_min: -180,
+    form_loaded_ms: 800,
+    continue_click_ms: 40_000,
+    submit_click_ms: 90_000,
+    submit_clicks: 1,
+    form_fill_ms: 89_200,
+    fields: {
+      firstName: {
+        first_focus_ms: 5_000,
+        last_blur_ms: 8_000,
+        focus_total_ms: 3_000,
+        input_count: 4,
+      },
+      goal: { first_input_ms: 60_000, last_input_ms: 60_000, input_count: 1 },
+    },
+  };
+
+  it("sends timing to the log but not to the CRM", async () => {
+    const f = crmReplies(201, { success: true, data: {} });
+    expect((await send(post({ ...lead, timing }), f, logCfg)).status).toBe(200);
+    expect(JSON.parse(f.mock.calls[0]![1]!.body as string)).not.toHaveProperty("timing");
+    await vi.waitFor(() => expect(f).toHaveBeenCalledTimes(2));
+    const logged = JSON.parse(f.mock.calls[1]![1]!.body as string);
+    expect(logged.data.timing.summary).toContain("submitted 1m 30s later");
+    expect(logged.data.timing.fields["First name"]).toBe("3.0s in the field, 4 changes, typed");
+  });
+
+  it("drops malformed timing instead of rejecting the lead", async () => {
+    const f = crmReplies(201, { success: true, data: {} });
+    const res = await send(post({ ...lead, timing: { submit_click_ms: -5 } }), f, logCfg);
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(f).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(f.mock.calls[1]![1]!.body as string).data.timing).toBeUndefined();
+  });
+});
